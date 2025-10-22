@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <title>Realtime Lens Distortion & Undistort</title>
 <style>
-  body { margin:0; background:#111; color:#eee; font-family:system-ui; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; }
-  canvas { max-width:80vw; max-height:60vh; box-shadow:0 0 30px rgba(0,0,0,.7); }
-  .controls { display:flex; gap:1em; flex-wrap:wrap; justify-content:center; margin-top:10px; }
-  label { display:flex; flex-direction:column; font-size:12px; align-items:center; }
-  input[type=range]{ width:100px; }
+body { margin:0; background:#111; color:#eee; font-family:system-ui; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; }
+canvas { max-width:80vw; max-height:60vh; box-shadow:0 0 30px rgba(0,0,0,.7); }
+.controls { display:flex; gap:1em; flex-wrap:wrap; justify-content:center; margin-top:10px; }
+label { display:flex; flex-direction:column; font-size:12px; align-items:center; }
+input[type=range]{ width:100px; }
 </style>
 </head>
 <body>
@@ -19,30 +19,26 @@
 <canvas id="gl"></canvas>
 
 <div class="controls">
-  <label>k1 <input id="k1" type="range" min="-0.5" max="0.5" step="0.001" value="-0.321"></label>
-  <label>k2 <input id="k2" type="range" min="-0.5" max="0.5" step="0.001" value="0.112"></label>
-  <label>p1 <input id="p1" type="range" min="-0.01" max="0.01" step="0.0001" value="-0.0012"></label>
-  <label>p2 <input id="p2" type="range" min="-0.01" max="0.01" step="0.0001" value="0.0008"></label>
-  <label>k3 <input id="k3" type="range" min="-0.5" max="0.5" step="0.001" value="-0.025"></label>
+  <label>k1 <input id="k1" type="range" min="-0.5" max="0.5" step="0.001" value="0"></label>
+  <label>k2 <input id="k2" type="range" min="-0.5" max="0.5" step="0.001" value="0"></label>
+  <label>p1 <input id="p1" type="range" min="-0.01" max="0.01" step="0.0001" value="0"></label>
+  <label>p2 <input id="p2" type="range" min="-0.01" max="0.01" step="0.0001" value="0"></label>
+  <label>k3 <input id="k3" type="range" min="-0.5" max="0.5" step="0.001" value="0"></label>
 </div>
 
 <script>
-let params = {
-  fx: 1, fy: 1, cx: 0.5, cy: 0.5,
-  k1:-0.321, k2:0.112, p1:-0.0012, p2:0.0008, k3:-0.025
-};
+let params = {fx:1, fy:1, cx:0.5, cy:0.5, k1:0,k2:0,p1:0,p2:0,k3:0};
 let undistort = false;
 let img = null, tex = null, imgW = 0, imgH = 0;
 
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl');
-const undistortToggle = document.getElementById('undistortToggle');
-undistortToggle.addEventListener('change', e => undistort = e.target.checked);
-
 if(!gl) alert("WebGL not supported!");
 
-// Shaders
+document.getElementById('undistortToggle').addEventListener('change', e => undistort = e.target.checked);
+
 const vs = `attribute vec2 a_pos; varying vec2 v_uv; void main(){ v_uv=a_pos*0.5+0.5; gl_Position=vec4(a_pos,0.,1.); }`;
+
 const fs = `
 precision highp float;
 varying vec2 v_uv;
@@ -63,8 +59,10 @@ void main(){
   float u_d = fx*x_d + cx;
   float v_d = fy*y_d + cy;
   vec2 st = vec2(u_d/imgW, v_d/imgH);
-  if(any(lessThan(st, vec2(0.))) || any(greaterThan(st, vec2(1.)))) gl_FragColor=vec4(0.,0.,0.,1.);
-  else gl_FragColor=texture2D(u_tex, st);
+  if(st.x < 0.0 || st.x > 1.0 || st.y < 0.0 || st.y > 1.0)
+      gl_FragColor = vec4(0.,0.,0.,1.);
+  else
+      gl_FragColor = texture2D(u_tex, st);
 }
 `;
 
@@ -92,16 +90,8 @@ gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);
 
 const u = name => gl.getUniformLocation(prog,name);
 
-// Camera uniforms (updated on image load)
-gl.uniform1f(u('fx'), params.fx);
-gl.uniform1f(u('fy'), params.fy);
-gl.uniform1f(u('cx'), params.cx);
-gl.uniform1f(u('cy'), params.cy);
-
 document.querySelectorAll('input[type=range]').forEach(sl=>{
-  sl.addEventListener('input', e=>{
-    params[e.target.id] = parseFloat(e.target.value);
-  });
+  sl.addEventListener('input', e => params[e.target.id] = parseFloat(e.target.value));
 });
 
 document.getElementById('fileInput').addEventListener('change', e=>{
@@ -118,9 +108,9 @@ document.getElementById('fileInput').addEventListener('change', e=>{
       imgH = img.height;
       gl.viewport(0,0,canvas.width,canvas.height);
 
-      // auto-scale camera parameters
-      params.fx = imgW;
-      params.fy = imgH;
+      // realistic camera scaling
+      params.fx = imgW*0.5;
+      params.fy = imgH*0.5;
       params.cx = imgW/2;
       params.cy = imgH/2;
 
