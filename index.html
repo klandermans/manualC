@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
 <meta charset="utf-8">
-<title>Realtime Lens Distortion met Upload</title>
+<title>Realtime Lens Distortion & Undistort</title>
 <style>
   body { margin:0; background:#111; color:#eee; font-family:system-ui; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; }
   canvas { max-width:80vw; max-height:60vh; box-shadow:0 0 30px rgba(0,0,0,.7); }
@@ -14,6 +14,8 @@
 <body>
 
 <input type="file" id="fileInput" accept="image/*">
+<label><input type="checkbox" id="undistortToggle"> Undistort</label>
+
 <canvas id="gl"></canvas>
 
 <div class="controls">
@@ -29,11 +31,12 @@ const params = {
   fx: 1050.23, fy: 1048.76, cx: 960.11, cy: 540.55,
   k1:-0.321,k2:0.112,p1:-0.0012,p2:0.0008,k3:-0.025
 };
+let undistort = false;
 
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl');
-
-if (!gl) alert("WebGL niet beschikbaar!");
+const undistortToggle = document.getElementById('undistortToggle');
+undistortToggle.addEventListener('change', e=>undistort=e.target.checked);
 
 const vs = `attribute vec2 a_pos; varying vec2 v_uv; void main(){ v_uv=a_pos*0.5+0.5; gl_Position=vec4(a_pos,0.,1.); }`;
 const fs = `
@@ -41,36 +44,29 @@ precision highp float;
 varying vec2 v_uv;
 uniform sampler2D u_tex;
 uniform float fx,fy,cx,cy,k1,k2,k3,p1,p2,imgW,imgH;
+uniform bool undistort;
 void main(){
-  float u=v_uv.x*imgW;
-  float v=v_uv.y*imgH;
-  float x=(u-cx)/fx;
-  float y=(v-cy)/fy;
-  float r2=x*x+y*y;
-  float r4=r2*r2;
-  float r6=r4*r2;
-  float radial = 1.0+k1*r2+k2*r4+k3*r6;
-  float x_d = x*radial + 2.0*p1*x*y + p2*(r2+2.0*x*x);
-  float y_d = y*radial + p1*(r2+2.0*y*y) + 2.0*p2*x*y;
-  float u_d = fx*x_d+cx;
-  float v_d = fy*y_d+cy;
+  float u = v_uv.x * imgW;
+  float v = v_uv.y * imgH;
+  float x = (u - cx)/fx;
+  float y = (v - cy)/fy;
+  float r2 = x*x + y*y;
+  float r4 = r2*r2;
+  float r6 = r4*r2;
+  float radial = 1.0 + k1*r2 + k2*r4 + k3*r6;
+  float x_d = undistort ? (x - 2.0*p1*x*y - p2*(r2+2.0*x*x))/radial : x*radial + 2.0*p1*x*y + p2*(r2+2.0*x*x);
+  float y_d = undistort ? (y - p1*(r2+2.0*y*y) - 2.0*p2*x*y)/radial : y*radial + p1*(r2+2.0*y*y) + 2.0*p2*x*y;
+  float u_d = fx*x_d + cx;
+  float v_d = fy*y_d + cy;
   vec2 st = vec2(u_d/imgW, v_d/imgH);
-  if(any(lessThan(st, vec2(0.))) || any(greaterThan(st, vec2(1.)))) gl_FragColor = vec4(0.,0.,0.,1.);
-  else gl_FragColor = texture2D(u_tex, st);
+  if(any(lessThan(st, vec2(0.))) || any(greaterThan(st, vec2(1.)))) gl_FragColor=vec4(0.,0.,0.,1.);
+  else gl_FragColor=texture2D(u_tex, st);
 }
 `;
 
-function compile(type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-    console.error(gl.getShaderInfoLog(s));
-  }
-  return s;
-}
+function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
 
-const prog = gl.createProgram();
+const prog=gl.createProgram();
 gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
 gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
 gl.linkProgram(prog);
@@ -85,20 +81,15 @@ gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);
 
 const u = name => gl.getUniformLocation(prog,name);
 
-// camera uniforms
 gl.uniform1f(u('fx'),params.fx);
 gl.uniform1f(u('fy'),params.fy);
 gl.uniform1f(u('cx'),params.cx);
 gl.uniform1f(u('cy'),params.cy);
 
-// sliders
 document.querySelectorAll('input[type=range]').forEach(sl=>{
-  sl.addEventListener('input',e=>{
-    params[e.target.id]=parseFloat(e.target.value);
-  });
+  sl.addEventListener('input', e => { params[e.target.id] = parseFloat(e.target.value); });
 });
 
-// texture
 let tex, imgW=0, imgH=0;
 
 document.getElementById('fileInput').addEventListener('change', e=>{
@@ -109,30 +100,29 @@ document.getElementById('fileInput').addEventListener('change', e=>{
     const img = new Image();
     img.src = ev.target.result;
     img.onload = ()=>{
-      canvas.width=img.width;
-      canvas.height=img.height;
+      canvas.width = img.width;
+      canvas.height = img.height;
       imgW = img.width;
       imgH = img.height;
       gl.viewport(0,0,canvas.width,canvas.height);
-
-      if(!tex) tex=gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D,tex);
+      if(!tex) tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
       gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
       gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
       gl.uniform1i(u('u_tex'),0);
-      gl.uniform1f(u('imgW'),imgW);
-      gl.uniform1f(u('imgH'),imgH);
+      gl.uniform1f(u('imgW'), imgW);
+      gl.uniform1f(u('imgH'), imgH);
     }
   }
   reader.readAsDataURL(file);
 });
 
-// render loop
 function render(){
   if(imgW>0 && imgH>0){
     for(const k of ['k1','k2','k3','p1','p2'])
       gl.uniform1f(u(k),params[k]);
+    gl.uniform1i(u('undistort'), undistort ? 1 : 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES,0,6);
   }
