@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>Realtime Lens Distortion Tuning</title>
+<style>
+  body { margin:0; background:#111; color:#eee; font-family:system-ui; display:grid; place-items:center; height:100vh; }
+  canvas { width:80vw; height:auto; max-height:80vh; box-shadow:0 0 30px rgba(0,0,0,.7); }
+  .controls { display:flex; gap:1em; flex-wrap:wrap; justify-content:center; margin-top:10px; }
+  label { display:flex; flex-direction:column; font-size:12px; align-items:center; }
+  input[type=range]{ width:100px; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="controls">
+  <label>k1 <input id="k1" type="range" min="-0.5" max="0.5" step="0.001" value="-0.321"></label>
+  <label>k2 <input id="k2" type="range" min="-0.5" max="0.5" step="0.001" value="0.112"></label>
+  <label>p1 <input id="p1" type="range" min="-0.01" max="0.01" step="0.0001" value="-0.0012"></label>
+  <label>p2 <input id="p2" type="range" min="-0.01" max="0.01" step="0.0001" value="0.0008"></label>
+  <label>k3 <input id="k3" type="range" min="-0.5" max="0.5" step="0.001" value="-0.025"></label>
+</div>
+
+<script>
+const params = {
+  fx: 1050.23, fy: 1048.76, cx: 960.11, cy: 540.55,
+  k1:-0.321,k2:0.112,p1:-0.0012,p2:0.0008,k3:-0.025
+};
+
+const gl = document.getElementById('gl').getContext('webgl');
+const vs = `attribute vec2 a_pos;varying vec2 v_uv;void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0.,1.);}`;
+const fs = `
+precision highp float;
+varying vec2 v_uv; uniform sampler2D u_tex;
+uniform float fx,fy,cx,cy,k1,k2,k3,p1,p2,imgW,imgH;
+void main(){
+ float u=v_uv.x*imgW,v=v_uv.y*imgH;
+ float x=(u-cx)/fx, y=(v-cy)/fy, r2=x*x+y*y;
+ float r4=r2*r2,r6=r4*r2;
+ float radial=1.0+k1*r2+k2*r4+k3*r6;
+ float x_d=x*radial+2.0*p1*x*y+p2*(r2+2.0*x*x);
+ float y_d=y*radial+p1*(r2+2.0*y*y)+2.0*p2*x*y;
+ float u_d=fx*x_d+cx,v_d=fy*y_d+cy;
+ vec2 st=vec2(u_d/imgW,v_d/imgH);
+ if(any(lessThan(st,vec2(0.)))||any(greaterThan(st,vec2(1.))))
+   gl_FragColor=vec4(0.,0.,0.,1.);
+ else gl_FragColor=texture2D(u_tex,st);
+}`;
+function compile(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+const prog=gl.createProgram();
+gl.attachShader(prog,compile(gl.VERTEX_SHADER,vs));
+gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,fs));
+gl.linkProgram(prog);gl.useProgram(prog);
+const posLoc=gl.getAttribLocation(prog,"a_pos");
+const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);
+const u=(n)=>gl.getUniformLocation(prog,n);
+const img=new Image();img.crossOrigin="anonymous";
+img.src="https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d?w=1920&q=80";
+img.onload=()=>{
+  gl.canvas.width=img.width;gl.canvas.height=img.height;
+  gl.viewport(0,0,gl.canvas.width,gl.canvas.height);
+  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.uniform1i(u('u_tex'),0);
+  gl.uniform1f(u('fx'),params.fx);gl.uniform1f(u('fy'),params.fy);
+  gl.uniform1f(u('cx'),params.cx);gl.uniform1f(u('cy'),params.cy);
+  gl.uniform1f(u('imgW'),img.width);gl.uniform1f(u('imgH'),img.height);
+  render();
+};
+function render(){
+  for(const k of ['k1','k2','k3','p1','p2'])
+    gl.uniform1f(u(k),params[k]);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+  requestAnimationFrame(render);
+}
+document.querySelectorAll('input[type=range]').forEach(sl=>{
+  sl.addEventListener('input',e=>{
+    params[e.target.id]=parseFloat(e.target.value);
+  });
+});
+</script>
+</body>
+</html>
