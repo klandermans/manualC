@@ -2,6 +2,8 @@
 
 This demo visualizes **radial and tangential lens distortion** in real time in the browser using WebGL.
 
+<a href=https://klandermans.github.io/manualC/>https://klandermans.github.io/manualC/</a>
+
 ## Features
 - Upload a local image (no CORS issues)
 - Adjust lens distortion parameters in real time:
