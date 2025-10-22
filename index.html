@@ -21,15 +21,15 @@ input[type=range]{ width:100px; }
 <div class="controls">
   <label>k1 <input id="k1" type="range" min="-0.5" max="0.5" step="0.001" value="0"></label>
   <label>k2 <input id="k2" type="range" min="-0.5" max="0.5" step="0.001" value="0"></label>
-  <label>p1 <input id="p1" type="range" min="-0.01" max="0.01" step="0.0001" value="0"></label>
-  <label>p2 <input id="p2" type="range" min="-0.01" max="0.01" step="0.0001" value="0"></label>
   <label>k3 <input id="k3" type="range" min="-0.5" max="0.5" step="0.001" value="0"></label>
+  <label>p1 <input id="p1" type="range" min="-0.1" max="0.1" step="0.001" value="0"></label>
+  <label>p2 <input id="p2" type="range" min="-0.1" max="0.1" step="0.001" value="0"></label>
 </div>
 
 <script>
-let params = {fx:1, fy:1, cx:0.5, cy:0.5, k1:0,k2:0,p1:0,p2:0,k3:0};
+let params = {k1:0,k2:0,k3:0,p1:0,p2:0};
 let undistort = false;
-let img = null, tex = null, imgW = 0, imgH = 0;
+let img = null, tex = null;
 
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl');
@@ -43,36 +43,29 @@ const fs = `
 precision highp float;
 varying vec2 v_uv;
 uniform sampler2D u_tex;
-uniform float fx,fy,cx,cy,k1,k2,k3,p1,p2,imgW,imgH;
+uniform float k1,k2,k3,p1,p2;
 uniform bool undistort;
 void main(){
-  float u = v_uv.x * imgW;
-  float v = v_uv.y * imgH;
-  float x = (u - cx)/fx;
-  float y = (v - cy)/fy;
-  float r2 = x*x + y*y;
-  float r4 = r2*r2;
-  float r6 = r4*r2;
-  float radial = 1.0 + k1*r2 + k2*r4 + k3*r6;
-  float x_d = undistort ? (x - 2.0*p1*x*y - p2*(r2+2.0*x*x))/radial : x*radial + 2.0*p1*x*y + p2*(r2+2.0*x*x);
-  float y_d = undistort ? (y - p1*(r2+2.0*y*y) - 2.0*p2*x*y)/radial : y*radial + p1*(r2+2.0*y*y) + 2.0*p2*x*y;
-  float u_d = fx*x_d + cx;
-  float v_d = fy*y_d + cy;
-  vec2 st = vec2(u_d/imgW, v_d/imgH);
-  if(st.x < 0.0 || st.x > 1.0 || st.y < 0.0 || st.y > 1.0)
-      gl_FragColor = vec4(0.,0.,0.,1.);
-  else
-      gl_FragColor = texture2D(u_tex, st);
+    vec2 xy = v_uv - 0.5;
+    float r2 = dot(xy, xy);
+    float radial = 1.0 + k1*r2 + k2*r2*r2 + k3*r2*r2*r2;
+    vec2 xy_d = undistort ? xy / radial : xy * radial;
+    // tangential distortion
+    xy_d += undistort ? vec2(0.0) : vec2(2.0*p1*xy.x*xy.y + p2*(r2+2.0*xy.x*xy.x),
+                                      p1*(r2+2.0*xy.y*xy.y) + 2.0*p2*xy.x*xy.y);
+    vec2 st = xy_d + 0.5;
+    if(st.x < 0.0 || st.x > 1.0 || st.y < 0.0 || st.y > 1.0) gl_FragColor = vec4(0.,0.,0.,1.);
+    else gl_FragColor = texture2D(u_tex, st);
 }
 `;
 
 function compile(type, src){
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-    console.error(gl.getShaderInfoLog(s));
-  return s;
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+        console.error(gl.getShaderInfoLog(s));
+    return s;
 }
 
 const prog = gl.createProgram();
@@ -91,51 +84,41 @@ gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);
 const u = name => gl.getUniformLocation(prog,name);
 
 document.querySelectorAll('input[type=range]').forEach(sl=>{
-  sl.addEventListener('input', e => params[e.target.id] = parseFloat(e.target.value));
+    sl.addEventListener('input', e => params[e.target.id] = parseFloat(e.target.value));
 });
 
 document.getElementById('fileInput').addEventListener('change', e=>{
-  const file = e.target.files[0];
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = function(ev){
-    img = new Image();
-    img.src = ev.target.result;
-    img.onload = ()=>{
-      canvas.width = img.width;
-      canvas.height = img.height;
-      imgW = img.width;
-      imgH = img.height;
-      gl.viewport(0,0,canvas.width,canvas.height);
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev){
+        img = new Image();
+        img.src = ev.target.result;
+        img.onload = ()=>{
+            canvas.width = img.width;
+            canvas.height = img.height;
+            gl.viewport(0,0,canvas.width,canvas.height);
 
-      // realistic camera scaling
-      params.fx = imgW*0.5;
-      params.fy = imgH*0.5;
-      params.cx = imgW/2;
-      params.cy = imgH/2;
-
-      if(!tex) tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-      gl.uniform1i(u('u_tex'),0);
-      gl.uniform1f(u('imgW'), imgW);
-      gl.uniform1f(u('imgH'), imgH);
+            if(!tex) tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
+            gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+            gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+            gl.uniform1i(u('u_tex'),0);
+        }
     }
-  }
-  reader.readAsDataURL(file);
+    reader.readAsDataURL(file);
 });
 
 function render(){
-  if(img && imgW>0 && imgH>0){
-    for(const k of ['k1','k2','k3','p1','p2'])
-      gl.uniform1f(u(k), params[k]);
-    gl.uniform1i(u('undistort'), undistort ? 1 : 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.TRIANGLES,0,6);
-  }
-  requestAnimationFrame(render);
+    if(img){
+        for(const k of ['k1','k2','k3','p1','p2'])
+            gl.uniform1f(u(k), params[k]);
+        gl.uniform1i(u('undistort'), undistort ? 1 : 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.drawArrays(gl.TRIANGLES,0,6);
+    }
+    requestAnimationFrame(render);
 }
 render();
 </script>
