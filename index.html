@@ -128,6 +128,31 @@ function render(){
   }
   requestAnimationFrame(render);
 }
+img.onload = ()=>{
+  canvas.width = img.width;
+  canvas.height = img.height;
+  imgW = img.width;
+  imgH = img.height;
+  gl.viewport(0,0,canvas.width,canvas.height);
+
+  // scale camera parameters to new image
+  params.fx = imgW;
+  params.fy = imgH;
+  params.cx = imgW/2;
+  params.cy = imgH/2;
+
+  if(!tex) tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.uniform1i(u('u_tex'),0);
+  gl.uniform1f(u('imgW'), imgW);
+  gl.uniform1f(u('imgH'), imgH);
+};
+
+
+  
 render();
 </script>
 
